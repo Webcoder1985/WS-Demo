@@ -1,8 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useState } from 'react';
-import { router } from 'expo-router';
-import { SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { AUTH_STATUS_KEY, AUTH_USER_KEY } from '@/constants/auth-storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 type LoginErrors = {
   email?: string;
@@ -146,11 +146,11 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#f98383',
+    backgroundColor: 'rgba(131,184,43,1.00)',
   },
   headerShape: {
     height: '35%',
-    backgroundColor: '#f98383',
+    backgroundColor: 'rgba(131,184,43,1.00)',
   },
   card: {
     flex: 1,
@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
     width: 54,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#f97878',
+    backgroundColor: 'rgba(47,111,47,1.00)',
     marginTop: 4,
     marginBottom: 20,
   },
@@ -182,7 +182,7 @@ const styles = StyleSheet.create({
   },
   input: {
     borderBottomWidth: 1,
-    borderBottomColor: '#efabab',
+    borderBottomColor: 'rgba(47,111,47,1.00)',
     paddingVertical: 8,
     fontSize: 15,
     color: '#333',
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   helperText: {
-    color: '#8f8f8f',
+    color: 'rgba(47,111,47,1.00)',
     fontSize: 12,
   },
   forgotText: {
@@ -211,7 +211,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   loginButton: {
-    backgroundColor: '#f97878',
+    backgroundColor: 'rgba(47,111,47,1.00)',
     borderRadius: 8,
     paddingVertical: 12,
     alignItems: 'center',

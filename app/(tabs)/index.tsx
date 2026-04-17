@@ -1,3 +1,6 @@
+import { AUTH_STATUS_KEY, AUTH_USER_KEY } from '@/constants/auth-storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
@@ -34,6 +37,7 @@ export default function HomeScreen() {
   const messageIdRef = useRef(0);
   const [isManuallyClosed, setIsManuallyClosed] = useState(false);
   const [shouldConnect, setShouldConnect] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const { width } = useWindowDimensions();
   const styles = useMemo(() => createStyles(width), [width]);
@@ -134,6 +138,17 @@ export default function HomeScreen() {
     setShouldConnect(true);
   }, []);
 
+  const handleLogout = useCallback(async () => {
+    try {
+      setIsLoggingOut(true);
+      await AsyncStorage.removeItem(AUTH_STATUS_KEY);
+      await AsyncStorage.removeItem(AUTH_USER_KEY);
+      router.replace('/login' as never);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }, []);
+
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.pageContent}>
@@ -228,6 +243,13 @@ export default function HomeScreen() {
           </View>
         </View>
       </View>
+      <TouchableOpacity
+        activeOpacity={0.85}
+        style={[styles.button, styles.logoutButton, isLoggingOut && styles.disabledButton]}
+        onPress={() => void handleLogout()}
+        disabled={isLoggingOut}>
+        <Text style={styles.buttonText}>{isLoggingOut ? 'Logging out...' : 'Logout'}</Text>
+      </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -245,7 +267,7 @@ const createStyles = (width: number) => {
     },
     pageContent: {
       gap: 12 * scale,
-      paddingBottom: 24 * scale,
+      paddingBottom: 0,
     },
     card: {
       backgroundColor: '#ececec',
@@ -353,6 +375,11 @@ const createStyles = (width: number) => {
     },
     closeButton: {
       backgroundColor: '#b4b4b4',
+    },
+    logoutButton: {
+      backgroundColor: '#dc2626',
+      marginTop: 4 * scale,
+      borderRadius: 0,
     },
     disabledButton: {
       opacity: 0.6,
