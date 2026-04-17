@@ -1,16 +1,34 @@
-import { useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useEffect, useState } from 'react';
 import { router } from 'expo-router';
 import { SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { AUTH_STATUS_KEY, AUTH_USER_KEY } from '@/constants/auth-storage';
 
 type LoginErrors = {
   email?: string;
   password?: string;
+  credentials?: string;
 };
+
+const ALLOWED_EMAIL = 'raymondedwardlee91@gmail.com';
+const ALLOWED_PASSWORD = '123!@#';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<LoginErrors>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const hydrateLoginState = async () => {
+      const authStatus = await AsyncStorage.getItem(AUTH_STATUS_KEY);
+      if (authStatus === 'true') {
+        router.replace('/(tabs)' as never);
+      }
+    };
+
+    void hydrateLoginState();
+  }, []);
 
   const validateLogin = (): LoginErrors => {
     const nextErrors: LoginErrors = {};
@@ -31,7 +49,7 @@ export default function LoginScreen() {
     return nextErrors;
   };
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     const validationErrors = validateLogin();
     setErrors(validationErrors);
 
@@ -39,8 +57,35 @@ export default function LoginScreen() {
       return;
     }
 
-    setErrors({});
-    router.replace('/(tabs)' as never);
+    const trimmedEmail = email.trim();
+    if (trimmedEmail !== ALLOWED_EMAIL || password !== ALLOWED_PASSWORD) {
+      setErrors({
+        credentials: 'Invalid email or password.',
+      });
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      setErrors({});
+
+      await AsyncStorage.setItem(AUTH_STATUS_KEY, 'true');
+      await AsyncStorage.setItem(
+        AUTH_USER_KEY,
+        JSON.stringify({
+          email: trimmedEmail,
+          loggedInAt: new Date().toISOString(),
+        })
+      );
+
+      router.replace('/(tabs)' as never);
+    } catch {
+      setErrors({
+        credentials: 'Unable to save login data. Please try again.',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -83,13 +128,14 @@ export default function LoginScreen() {
           secureTextEntry
         />
         {errors.password ? <Text style={styles.errorText}>{errors.password}</Text> : null}
+        {errors.credentials ? <Text style={styles.errorText}>{errors.credentials}</Text> : null}
 
         <View style={styles.helperRow}>
           <Text style={styles.helperText}>Remember me</Text>
           <Text style={styles.forgotText}>Forgot password?</Text>
         </View>
 
-        <TouchableOpacity activeOpacity={0.85} style={styles.loginButton} onPress={handleLogin}>
+        <TouchableOpacity activeOpacity={0.85} style={[styles.loginButton, isSubmitting && styles.loginButtonDisabled]} onPress={() => void handleLogin()} disabled={isSubmitting}>
           <Text style={styles.loginButtonText}>Login</Text>
         </TouchableOpacity>
       </View>
@@ -169,6 +215,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 12,
     alignItems: 'center',
+  },
+  loginButtonDisabled: {
+    opacity: 0.7,
   },
   loginButtonText: {
     color: '#fff',

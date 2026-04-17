@@ -1,5 +1,4 @@
-import { router } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 
@@ -9,96 +8,137 @@ type ChatMessage = {
   text: string;
 };
 
+type BookLevel = [number, number];
+
+type BookMessage = {
+  event?: string;
+  numLevels?: number;
+  bids?: BookLevel[];
+  asks?: BookLevel[];
+};
+
 const SOCKET_URL = 'wss://ws.postman-echo.com/raw';
+const WSS_FEED_URL = 'wss://www.cryptofacilities.com/ws/v1';
+const PRODUCT_ID = 'PI_XBTUSD';
+const ORDERBOOK_LEVELS = 15;
+const CHAT_RECONNECT_ATTEMPTS = 10;
+const CHAT_RECONNECT_INTERVAL_MS = 3000;
+const ORDERBOOK_RECONNECT_ATTEMPTS = 10;
+const ORDERBOOK_RECONNECT_INTERVAL_MS = 2000;
 
 export default function HomeScreen() {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [bids, setBids] = useState<BookLevel[]>([]);
+  const [asks, setAsks] = useState<BookLevel[]>([]);
   const messageIdRef = useRef(0);
   const [isManuallyClosed, setIsManuallyClosed] = useState(false);
   const [shouldConnect, setShouldConnect] = useState(false);
 
   const { width } = useWindowDimensions();
-  const isCompact = width < 900;
   const styles = useMemo(() => createStyles(width), [width]);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(!isCompact);
+
+  const appendChatMessage = useCallback((kind: ChatMessage['kind'], text: string) => {
+    setMessages((prev) => [...prev, { id: messageIdRef.current++, kind, text }]);
+  }, []);
 
   const { sendMessage, lastMessage, readyState, getWebSocket } = useWebSocket(
     SOCKET_URL,
     {
       retryOnError: true,
       shouldReconnect: () => shouldConnect && !isManuallyClosed,
-      reconnectAttempts: 10,
-      reconnectInterval: 3000,
+      reconnectAttempts: CHAT_RECONNECT_ATTEMPTS,
+      reconnectInterval: CHAT_RECONNECT_INTERVAL_MS,
     },
     shouldConnect
   );
+  const { sendJsonMessage, lastJsonMessage, readyState: orderbookReadyState } = useWebSocket(WSS_FEED_URL, {
+    retryOnError: true,
+    shouldReconnect: () => true,
+    reconnectAttempts: ORDERBOOK_RECONNECT_ATTEMPTS,
+    reconnectInterval: ORDERBOOK_RECONNECT_INTERVAL_MS,
+  });
 
-  const latestReceived = messages.filter((item) => item.kind === 'received').at(-1)?.text ?? 'No messages yet';
+  const latestReceived = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].kind === 'received') {
+        return messages[i].text;
+      }
+    }
+    return 'No messages yet';
+  }, [messages]);
   const isOpen = readyState === ReadyState.OPEN;
-  const statusText = useMemo(() => {
-    if (readyState === ReadyState.UNINSTANTIATED) {
-      return 'Connection not started.';
-    }
-    if (readyState === ReadyState.OPEN) {
-      return `Connected to: ${SOCKET_URL}`;
-    }
-    if (readyState === ReadyState.CONNECTING) {
-      return 'Connecting...';
-    }
-    if (readyState === ReadyState.CLOSING) {
-      return 'Closing WebSocket...';
-    }
-    if (readyState === ReadyState.CLOSED) {
-      return 'Disconnected from WebSocket.';
-    }
-    return 'WebSocket not ready.';
-  }, [readyState]);
+  const statusText = useMemo(() => getChatStatusText(readyState), [readyState]);
+  const orderbookStatus = useMemo(() => getOrderbookStatusText(orderbookReadyState), [orderbookReadyState]);
 
   useEffect(() => {
     if (lastMessage?.data) {
-      const incoming = String(lastMessage.data);
-      setMessages((prev) => [
-        ...prev,
-        { id: messageIdRef.current++, kind: 'received', text: incoming },
-      ]);
+      appendChatMessage('received', String(lastMessage.data));
     }
-  }, [lastMessage]);
+  }, [appendChatMessage, lastMessage]);
+  useEffect(() => {
+    sendJsonMessage({
+      event: 'subscribe',
+      feed: 'book_ui_1',
+      product_ids: [PRODUCT_ID],
+    });
 
-  const handleSend = () => {
+    return () => {
+      sendJsonMessage({
+        event: 'unsubscribe',
+        feed: 'book_ui_1',
+        product_ids: [PRODUCT_ID],
+      });
+    };
+  }, [sendJsonMessage]);
+  useEffect(() => {
+    const incoming = lastJsonMessage as BookMessage | null;
+    if (!incoming) {
+      return;
+    }
+
+    if (incoming.numLevels && incoming.bids && incoming.asks) {
+      setBids(sortBids(incoming.bids).slice(0, ORDERBOOK_LEVELS));
+      setAsks(sortAsks(incoming.asks).slice(0, ORDERBOOK_LEVELS));
+      return;
+    }
+
+    if (incoming.bids && incoming.bids.length > 0) {
+      setBids((prev) => mergeBookLevels(prev, incoming.bids ?? [], 'bids').slice(0, ORDERBOOK_LEVELS));
+    }
+
+    if (incoming.asks && incoming.asks.length > 0) {
+      setAsks((prev) => mergeBookLevels(prev, incoming.asks ?? [], 'asks').slice(0, ORDERBOOK_LEVELS));
+    }
+  }, [lastJsonMessage]);
+
+  const handleSend = useCallback(() => {
     const trimmed = message.trim();
     if (!trimmed || !isOpen) {
       return;
     }
 
     sendMessage(trimmed);
-    setMessages((prev) => [...prev, { id: messageIdRef.current++, kind: 'sent', text: trimmed }]);
+    appendChatMessage('sent', trimmed);
     setMessage('');
-  };
+  }, [appendChatMessage, isOpen, message, sendMessage]);
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     setIsManuallyClosed(true);
     setShouldConnect(false);
     getWebSocket()?.close();
-  };
+  }, [getWebSocket]);
 
-  const handleStart = () => {
+  const handleStart = useCallback(() => {
     setIsManuallyClosed(false);
     setShouldConnect(true);
-  };
-
-  const handleNavigateToBlank = () => {
-    router.push('/blank' as never);
-  };
-
-  useEffect(() => {
-    setIsSidebarOpen(!isCompact);
-  }, [isCompact]);
+  }, []);
 
   return (
     <SafeAreaView style={styles.screen}>
+      <ScrollView contentContainerStyle={styles.pageContent}>
       <View style={styles.card}>
-        <Text style={styles.title}>WebSockets Demo</Text>
+        <Text style={styles.title}>WebSockets Connection Demo</Text>
 
         <Text style={[styles.connectionStatus, isOpen ? styles.statusOpen : styles.statusClosed]}>
           {statusText}
@@ -153,6 +193,42 @@ export default function HomeScreen() {
           )}
         </View>
       </View>
+      <View style={styles.orderbookCard}>
+        <Text style={styles.title}>Crypto WebSocket Demo</Text>
+        <Text
+          style={[
+            styles.orderbookStatus,
+            orderbookReadyState === ReadyState.OPEN ? styles.orderbookStatusOk : styles.orderbookStatusBad,
+          ]}>
+          {orderbookStatus}
+        </Text>
+
+        <View style={styles.orderbookColumns}>
+          <View style={styles.orderbookTable}>
+            <Text style={styles.orderbookTableTitle}>Bids</Text>
+            <Text style={styles.orderbookHeader}>Price | Size</Text>
+            <ScrollView style={styles.orderbookRowsContainer}>
+              {bids.map(([price, size]) => (
+                <Text key={`b-${price}-${size}`} style={styles.orderbookRow}>
+                  {formatNumber(price)} | {formatNumber(size)}
+                </Text>
+              ))}
+            </ScrollView>
+          </View>
+          <View style={styles.orderbookTable}>
+            <Text style={styles.orderbookTableTitle}>Asks</Text>
+            <Text style={styles.orderbookHeader}>Price | Size</Text>
+            <ScrollView style={styles.orderbookRowsContainer}>
+              {asks.map(([price, size]) => (
+                <Text key={`a-${price}-${size}`} style={styles.orderbookRow}>
+                  {formatNumber(price)} | {formatNumber(size)}
+                </Text>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -163,52 +239,15 @@ const createStyles = (width: number) => {
 
   return StyleSheet.create({
     screen: {
-      backgroundColor: '#2f2f32',
+      backgroundColor: '#ececec',
       padding: 12 * scale,
       flex: 1,
     },
-    header: {
-      height: 52 * scale,
-      backgroundColor: '#ececec',
-      borderRadius: 6,
-      marginBottom: 10 * scale,
-      paddingHorizontal: 10 * scale,
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    headerSpacer: {
-      flex: 1,
-    },
-    toggleButton: {
-      backgroundColor: '#4b5563',
-      borderRadius: 4,
-      paddingHorizontal: 14 * scale,
-      paddingVertical: 8 * scale,
-    },
-    toggleButtonText: {
-      color: '#fff',
-      fontSize: 14 * scale,
-      fontWeight: '600',
-    },
-    layout: {
-      flex: 1,
-      flexDirection: isCompact ? 'column' : 'row',
-      gap: 10 * scale,
-    },
-    sidebar: {
-      width: isCompact ? '100%' : 220,
-      backgroundColor: '#1f2937',
-      borderRadius: 6,
-      padding: 10 * scale,
-      gap: 10 * scale,
-    },
-    sidebarTitle: {
-      color: '#fff',
-      fontSize: 16 * scale,
-      fontWeight: '700',
+    pageContent: {
+      gap: 12 * scale,
+      paddingBottom: 24 * scale,
     },
     card: {
-      flex: 1,
       backgroundColor: '#ececec',
       borderTopWidth: 3,
       borderTopColor: '#2f6f2f',
@@ -217,14 +256,22 @@ const createStyles = (width: number) => {
       paddingVertical: 16 * scale,
       elevation: 8,
     },
+    orderbookCard: {
+      backgroundColor: '#ececec',
+      borderTopWidth: 3,
+      borderTopColor: '#2f6f2f',
+      borderRadius: 2,
+      paddingHorizontal: 14 * scale,
+      paddingVertical: 16 * scale,
+    },
     title: {
-      fontSize: 42 * scale,
+      fontSize: 22 * scale,
       fontWeight: '700',
       color: '#111',
       marginBottom: 12 * scale,
     },
     connectionStatus: {
-      fontSize: 22 * scale,
+      fontSize: 14 * scale,
       marginBottom: 12 * scale,
     },
     statusOpen: {
@@ -249,12 +296,13 @@ const createStyles = (width: number) => {
       fontSize: 14 * scale,
     },
     receivedText: {
-      fontSize: 22 * scale,
+      fontSize: 14 * scale,
       color: '#111',
       flexShrink: 1,
     },
     messagesContainer: {
       maxHeight: 140 * scale,
+      minHeight: 120 * scale,
       borderWidth: 1,
       borderColor: '#d4d4d4',
       borderRadius: 3,
@@ -280,7 +328,7 @@ const createStyles = (width: number) => {
       borderRadius: 3,
       backgroundColor: '#f7f7f7',
       minHeight: 120 * scale,
-      fontSize: 22 * scale,
+      fontSize: 14 * scale,
       color: '#20232a',
       paddingHorizontal: 10 * scale,
       paddingVertical: 8 * scale,
@@ -303,9 +351,6 @@ const createStyles = (width: number) => {
     startButton: {
       backgroundColor: '#2b7bb8',
     },
-    navigateButton: {
-      backgroundColor: '#6c5ce7',
-    },
     closeButton: {
       backgroundColor: '#b4b4b4',
     },
@@ -314,9 +359,118 @@ const createStyles = (width: number) => {
     },
     buttonText: {
       color: '#fff',
-      fontSize: 20 * scale,
+      fontSize: 14 * scale,
       fontWeight: '500',
       textAlign: 'center',
     },
+    orderbookStatus: {
+      fontSize: 14 * scale,
+      marginBottom: 10 * scale,
+    },
+    orderbookStatusOk: {
+      color: '#2fd15a',
+    },
+    orderbookStatusBad: {
+      color: '#f27575',
+    },
+    orderbookColumns: {
+      flexDirection: 'row',
+      gap: 12 * scale,
+    },
+    orderbookTable: {
+      flex: 1,
+      backgroundColor: '#ececec',
+      borderRadius: 0,
+      padding: 10 * scale,
+      borderWidth: 1,
+      borderColor: 'rgba(210,210,210,1.00)',
+      minHeight: 240 * scale,
+      maxHeight: 320 * scale,
+    },
+    orderbookRowsContainer: {
+      flex: 1,
+    },
+    orderbookTableTitle: {
+      color: '#000000',
+      fontSize: 16 * scale,
+      fontWeight: '700',
+      marginBottom: 8 * scale,
+    },
+    orderbookHeader: {
+      color: '#9da6b3',
+      fontSize: 14 * scale,
+      marginBottom: 8 * scale,
+    },
+    orderbookRow: {
+      color: '#000000',
+      fontSize: 14 * scale,
+      marginBottom: 6 * scale,
+    },
   });
 };
+
+function mergeBookLevels(current: BookLevel[], delta: BookLevel[], side: 'bids' | 'asks'): BookLevel[] {
+  const map = new Map<number, number>();
+
+  for (const [price, size] of current) {
+    map.set(price, size);
+  }
+
+  for (const [price, size] of delta) {
+    if (size === 0) {
+      map.delete(price);
+    } else {
+      map.set(price, size);
+    }
+  }
+
+  const merged = Array.from(map.entries()).map(([price, size]) => [price, size] as BookLevel);
+  return side === 'bids' ? sortBids(merged) : sortAsks(merged);
+}
+
+function sortBids(levels: BookLevel[]): BookLevel[] {
+  return [...levels].sort((a, b) => b[0] - a[0]);
+}
+
+function sortAsks(levels: BookLevel[]): BookLevel[] {
+  return [...levels].sort((a, b) => a[0] - b[0]);
+}
+
+function formatNumber(value: number): string {
+  return value.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+function getChatStatusText(state: ReadyState): string {
+  if (state === ReadyState.UNINSTANTIATED) {
+    return 'Connection not started.';
+  }
+  if (state === ReadyState.OPEN) {
+    return `Connected to: ${SOCKET_URL}`;
+  }
+  if (state === ReadyState.CONNECTING) {
+    return 'Connecting...';
+  }
+  if (state === ReadyState.CLOSING) {
+    return 'Closing WebSocket...';
+  }
+  if (state === ReadyState.CLOSED) {
+    return 'Disconnected from WebSocket.';
+  }
+  return 'WebSocket not ready.';
+}
+
+function getOrderbookStatusText(state: ReadyState): string {
+  if (state === ReadyState.OPEN) {
+    return `Connected: ${PRODUCT_ID}`;
+  }
+  if (state === ReadyState.CONNECTING) {
+    return 'Connecting...';
+  }
+  if (state === ReadyState.CLOSING) {
+    return 'Closing...';
+  }
+  if (state === ReadyState.CLOSED) {
+    return 'Disconnected';
+  }
+  return 'Not started';
+}
