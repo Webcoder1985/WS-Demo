@@ -6,20 +6,24 @@ import { SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } fro
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 
 const DEFAULT_SOCKET_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
+const CHAT_RECONNECT_ATTEMPTS = 10;
+const CHAT_RECONNECT_INTERVAL_MS = 3000;
 
 export default function WebSocketConnectionScreen() {
   const [url, setUrl] = useState(DEFAULT_SOCKET_URL);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [isManuallyClosed, setIsManuallyClosed] = useState(false);
   const [shouldConnect, setShouldConnect] = useState(false);
-  const [shouldRedirectOnConnect, setShouldRedirectOnConnect] = useState(false);
 
   const socketUrl = url.trim() || DEFAULT_SOCKET_URL;
   const { readyState, getWebSocket, lastMessage } = useWebSocket(
     socketUrl,
     {
       retryOnError: true,
-      reconnectAttempts: 0,
+      shouldReconnect: () => shouldConnect && !isManuallyClosed,
+      reconnectAttempts: CHAT_RECONNECT_ATTEMPTS,
+      reconnectInterval: CHAT_RECONNECT_INTERVAL_MS,
     },
     shouldConnect
   );
@@ -47,51 +51,19 @@ export default function WebSocketConnectionScreen() {
 
   useEffect(() => {
     return () => {
+      setIsManuallyClosed(true);
       setShouldConnect(false);
       getWebSocket()?.close();
     };
   }, [getWebSocket]);
 
-  useEffect(() => {
-    if (shouldRedirectOnConnect && readyState === ReadyState.OPEN) {
-      setShouldRedirectOnConnect(false);
-      router.replace('/chat' as never);
-    }
-  }, [readyState, shouldRedirectOnConnect]);
-
   const handleConnect = async () => {
-    getWebSocket()?.close();
-    setShouldConnect(false);
+    setIsManuallyClosed(false);
+    setShouldConnect(true);
     await AsyncStorage.setItem(SOCKET_URL_KEY, socketUrl);
     await AsyncStorage.setItem(SOCKET_CONNECTED_KEY, 'true');
     await AsyncStorage.setItem(AUTH_STATUS_KEY, 'true');
-    setShouldRedirectOnConnect(true);
-    setTimeout(() => {
-      setShouldConnect(true);
-    }, 0);
-  };
-
-  const handleUrlChange = (value: string) => {
-    setUrl(value);
-    setShouldRedirectOnConnect(false);
-    setShouldConnect(false);
-    getWebSocket()?.close();
-  };
-
-  const handleAnyInputChange = () => {
-    setShouldRedirectOnConnect(false);
-    setShouldConnect(false);
-    getWebSocket()?.close();
-  };
-
-  const handleUsernameChange = (value: string) => {
-    setUsername(value);
-    handleAnyInputChange();
-  };
-
-  const handlePasswordChange = (value: string) => {
-    setPassword(value);
-    handleAnyInputChange();
+    router.replace('/dashboard' as never);
   };
 
   const latestMessage = lastMessage?.data ? String(lastMessage.data) : 'No messages received yet.';
@@ -110,7 +82,7 @@ export default function WebSocketConnectionScreen() {
           placeholder="https://example.com"
           placeholderTextColor="#a0a0a0"
           value={url}
-          onChangeText={handleUrlChange}
+          onChangeText={setUrl}
           keyboardType="url"
           autoCapitalize="none"
         />
@@ -120,7 +92,7 @@ export default function WebSocketConnectionScreen() {
           placeholder="Enter your user name"
           placeholderTextColor="#a0a0a0"
           value={username}
-          onChangeText={handleUsernameChange}
+          onChangeText={setUsername}
           autoCapitalize="words"
         />
         <Text style={styles.label}>Password</Text>
@@ -129,7 +101,7 @@ export default function WebSocketConnectionScreen() {
           placeholder="Enter your password"
           placeholderTextColor="#a0a0a0"
           value={password}
-          onChangeText={handlePasswordChange}
+          onChangeText={setPassword}
           secureTextEntry
         />
         <Text style={styles.socketStatus}>Status: {socketStatus}</Text>

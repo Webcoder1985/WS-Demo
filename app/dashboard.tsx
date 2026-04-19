@@ -1,5 +1,9 @@
+import { SOCKET_URL_KEY } from '@/constants/auth-storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Stack } from 'expo-router';
+import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 
 const WSS_FEED_URL = 'wss://www.cryptofacilities.com/ws/v1';
@@ -18,13 +22,25 @@ type BookMessage = {
 export default function BlankScreen() {
   const [bids, setBids] = useState<BookLevel[]>([]);
   const [asks, setAsks] = useState<BookLevel[]>([]);
+  const [socketUrl, setSocketUrl] = useState(WSS_FEED_URL);
 
-  const { sendJsonMessage, lastJsonMessage, readyState } = useWebSocket(WSS_FEED_URL, {
+  const { sendJsonMessage, lastJsonMessage, readyState, getWebSocket } = useWebSocket(socketUrl, {
     retryOnError: true,
     shouldReconnect: () => true,
     reconnectAttempts: 10,
     reconnectInterval: 2000,
   });
+
+  useEffect(() => {
+    const hydrateSocketUrl = async () => {
+      const savedUrl = await AsyncStorage.getItem(SOCKET_URL_KEY);
+      if (savedUrl?.trim()) {
+        setSocketUrl(savedUrl);
+      }
+    };
+
+    void hydrateSocketUrl();
+  }, []);
 
   useEffect(() => {
     sendJsonMessage({
@@ -79,8 +95,14 @@ export default function BlankScreen() {
     return 'Not started';
   }, [readyState]);
 
+  const handleDisconnect = () => {
+    getWebSocket()?.close();
+    router.replace('/login_trading' as never);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
+      <Stack.Screen options={{ headerShown: false }} />
       <Text style={[styles.status, readyState === ReadyState.OPEN ? styles.statusOk : styles.statusBad]}>
         {status}
       </Text>
@@ -110,6 +132,9 @@ export default function BlankScreen() {
           </ScrollView>
         </View>
       </View>
+      <TouchableOpacity activeOpacity={0.85} style={styles.disconnectButton} onPress={handleDisconnect}>
+        <Text style={styles.disconnectButtonText}>Disconnect</Text>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -190,5 +215,18 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontSize: 13,
     marginBottom: 6,
+  },
+  disconnectButton: {
+    backgroundColor: '#b4b4b4',
+    borderRadius: 0,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginHorizontal: 10,
+    marginBottom: 10,
+  },
+  disconnectButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
