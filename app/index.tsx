@@ -29,7 +29,7 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={isLoggedIn ? '/dashboard' : '/login'} />;
+  return <Redirect href={isLoggedIn ? '/chat' : '/login'} />;
 }
 
 const styles = StyleSheet.create({

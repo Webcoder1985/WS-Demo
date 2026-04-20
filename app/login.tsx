@@ -1,11 +1,18 @@
-import { AUTH_STATUS_KEY, SOCKET_CONNECTED_KEY, SOCKET_URL_KEY } from '@/constants/auth-storage';
+import { buildWebSocketConnectUrl, stripSocketAuthQueryParams } from '@/constants/build-ws-connect-url';
+import {
+  AUTH_STATUS_KEY,
+  SOCKET_CONNECTED_KEY,
+  SOCKET_URL_KEY,
+  SOCKET_WS_PASSWORD_KEY,
+  SOCKET_WS_USERNAME_KEY,
+} from '@/constants/auth-storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 
-const DEFAULT_SOCKET_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
+const DEFAULT_SOCKET_URL = 'ws://localhost:8080';
 
 export default function WebSocketConnectionScreen() {
   const [url, setUrl] = useState(DEFAULT_SOCKET_URL);
@@ -14,9 +21,14 @@ export default function WebSocketConnectionScreen() {
   const [shouldConnect, setShouldConnect] = useState(false);
   const [shouldRedirectOnConnect, setShouldRedirectOnConnect] = useState(false);
 
-  const socketUrl = url.trim() || DEFAULT_SOCKET_URL;
+  const baseSocketUrl = url.trim() || DEFAULT_SOCKET_URL;
+  const connectSocketUrl = useMemo(
+    () => buildWebSocketConnectUrl(baseSocketUrl, username, password),
+    [baseSocketUrl, username, password]
+  );
+
   const { readyState, getWebSocket, lastMessage } = useWebSocket(
-    socketUrl,
+    connectSocketUrl,
     {
       retryOnError: true,
       reconnectAttempts: 0,
@@ -36,9 +48,20 @@ export default function WebSocketConnectionScreen() {
 
   useEffect(() => {
     const hydrateSavedSocketUrl = async () => {
-      const savedUrl = await AsyncStorage.getItem(SOCKET_URL_KEY);
+      const [savedUrl, savedUser, savedPass] = await Promise.all([
+        AsyncStorage.getItem(SOCKET_URL_KEY),
+        AsyncStorage.getItem(SOCKET_WS_USERNAME_KEY),
+        AsyncStorage.getItem(SOCKET_WS_PASSWORD_KEY),
+      ]);
+
       if (savedUrl?.trim()) {
-        setUrl(savedUrl);
+        setUrl(stripSocketAuthQueryParams(savedUrl));
+      }
+      if (savedUser != null) {
+        setUsername(savedUser);
+      }
+      if (savedPass != null) {
+        setPassword(savedPass);
       }
     };
 
@@ -62,7 +85,9 @@ export default function WebSocketConnectionScreen() {
   const handleConnect = async () => {
     getWebSocket()?.close();
     setShouldConnect(false);
-    await AsyncStorage.setItem(SOCKET_URL_KEY, socketUrl);
+    await AsyncStorage.setItem(SOCKET_URL_KEY, baseSocketUrl);
+    await AsyncStorage.setItem(SOCKET_WS_USERNAME_KEY, username);
+    await AsyncStorage.setItem(SOCKET_WS_PASSWORD_KEY, password);
     await AsyncStorage.setItem(SOCKET_CONNECTED_KEY, 'true');
     await AsyncStorage.setItem(AUTH_STATUS_KEY, 'true');
     setShouldRedirectOnConnect(true);
@@ -107,7 +132,7 @@ export default function WebSocketConnectionScreen() {
         <Text style={styles.label}>URL</Text>
         <TextInput
           style={styles.input}
-          placeholder="https://example.com"
+          placeholder="ws://localhost:8080"
           placeholderTextColor="#a0a0a0"
           value={url}
           onChangeText={handleUrlChange}
